@@ -284,6 +284,12 @@ typedef void (^data_callback)(SRWebSocket *webSocket,  NSData *data);
     
     NSArray *_requestedProtocols;
     SRIOConsumerPool *_consumerPool;
+    
+    NSTimer *_pingTimer;
+    
+    NSData *_pingSendData;
+    BOOL _isPtPConected;
+    NSInteger _pingInterval;
 }
 
 @synthesize delegate = _delegate;
@@ -741,9 +747,72 @@ static __strong NSData *CRLFCRLF;
     }];
 }
 
-- (void)handlePong;
+- (void)handlePong:(NSData *)pingData;
 {
-    // NOOP
+    if ([pingData isEqualToData:_pingSendData]) {
+        
+        _isPtPConected = YES;
+    }
+}
+
+-(void)ping
+{
+    if (!_pingSendData) {
+        
+        UInt8 checkData[] = {0,1,1,3};
+        _isPtPConected = YES; //YES because we meet this var at first time under success connection
+        _pingSendData = [NSData dataWithBytes:checkData length:sizeof(checkData)];
+    }
+    
+    if (_isPtPConected == NO) {
+
+        SRFastLog(@"we are not uplink now! \n");
+        [self _performDelegateBlock:^{
+            
+            if ([self.delegate respondsToSelector:@selector(webSocketDidOutOfPingAndShouldRetry:)]) {
+                
+                if([self.delegate webSocketDidOutOfPingAndShouldRetry:self])
+                {
+                    dispatch_async(_workQueue, ^{
+                        [self _sendFrameWithOpcode:SROpCodePing data:_pingSendData];
+                    });
+                    
+                    _isPtPConected = NO;
+                    SRFastLog(@"we resume uplink! \n");
+                    
+                } else {
+                    [self cancelPing];
+                }
+            }
+        }];
+        
+        return; 
+    }
+    
+    dispatch_async(_workQueue, ^{
+        
+        [self _sendFrameWithOpcode:SROpCodePing data:_pingSendData];
+    });
+    
+    _isPtPConected = NO;
+    SRFastLog(@"we are still uplink! \n");
+}
+
+-(void)startPing
+{
+    _pingInterval = 5.0;
+    _pingTimer =  [NSTimer scheduledTimerWithTimeInterval:_pingInterval target:self selector:@selector(ping) userInfo:nil repeats:YES];
+    
+    [[NSRunLoop SR_networkRunLoop] addTimer:_pingTimer  forMode:NSDefaultRunLoopMode];
+    [_scheduledRunloops addObject:@[[NSRunLoop SR_networkRunLoop], NSDefaultRunLoopMode]];
+}
+
+-(void)cancelPing
+{
+    if (_pingTimer != nil) {
+        [_pingTimer invalidate];
+        _pingTimer = nil;
+    }
 }
 
 - (void)_handleMessage:(id)message
@@ -873,7 +942,7 @@ static inline BOOL closeCodeIsValid(int closeCode) {
             [self handlePing:frameData];
             break;
         case SROpCodePong:
-            [self handlePong];
+            [self handlePong:frameData];
             break;
         default:
             [self _closeWithProtocolError:[NSString stringWithFormat:@"Unknown opcode %d", opcode]];
@@ -1446,6 +1515,9 @@ static const size_t SRFrameHeaderOverhead = 32;
                         [self _performDelegateBlock:^{
                             if ([self.delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
                                 [self.delegate webSocket:self didCloseWithCode:0 reason:@"Stream end encountered" wasClean:NO];
+                                
+                                //comment 2
+                                [self cancelPing];
                             }
                         }];
                     }

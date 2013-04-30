@@ -110,6 +110,8 @@
 {
     NSLog(@"Websocket Connected");
     self.title = @"Connected!";
+    
+    [webSocket startPing];
 }
 
 - (void)webSocket:(SRWebSocket *)webSocket didFailWithError:(NSError *)error;
@@ -130,7 +132,7 @@
 
 - (void)webSocket:(SRWebSocket *)webSocket didCloseWithCode:(NSInteger)code reason:(NSString *)reason wasClean:(BOOL)wasClean;
 {
-    NSLog(@"WebSocket closed");
+    NSLog(@"WebSocket closed wirh code %i and reason %@ \n", code, reason);
     self.title = @"Connection Closed! (see logs)";
     _webSocket = nil;
 }
@@ -148,6 +150,11 @@
         textView.text = @"";
         return NO;
     }
+    return YES;
+}
+
+-(BOOL)webSocketDidOutOfPingAndShouldRetry:(SRWebSocket *)webSocket
+{
     return YES;
 }
 
